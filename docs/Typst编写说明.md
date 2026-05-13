@@ -34,6 +34,14 @@ typst compile docs/实验报告.typ
 
 默认生成 **`docs/实验报告.pdf`**。
 
+**三天三人协作方案：**
+
+```bash
+typst compile docs/三天三人方案.typ
+```
+
+生成 **`docs/三天三人方案.pdf`**（文件名与源文件一致，仅扩展名改为 `.pdf`）。
+
 指定输出文件名示例：
 
 ```bash
