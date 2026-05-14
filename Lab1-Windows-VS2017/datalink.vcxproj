@@ -73,6 +73,7 @@
   <ItemGroup>
     <ClCompile Include="..\src\crc32.c" />
     <ClCompile Include="..\src\datalink.c" />
+    <ClCompile Include="..\src\datalink_recv.c" />
     <ClCompile Include="..\src\getopt.c" />
     <ClCompile Include="..\src\lprintf.c" />
     <ClCompile Include="..\src\protocol.c" />

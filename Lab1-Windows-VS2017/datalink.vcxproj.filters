@@ -30,6 +30,9 @@
     <ClCompile Include="..\src\datalink.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\datalink_recv.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\include\getopt.h">
