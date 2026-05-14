@@ -34,8 +34,11 @@
 /* ACK 搭载：RTT 大时不宜过长等待捎带，避免对端 DATA 超时 */
 #define ACK_TIMEOUT_MS  200
 
-/* 线路上最大帧长：kind+seq+ack + PKT_LEN + CRC32 */
-#define MAX_FRAME_BYTES (3 + PKT_LEN + 4)
+/* 帧首部长度：kind(1) + seq(1) + ack(1) */
+#define FRAME_HDR_LEN   3
+
+/* 线路上最大帧长：首部 + PKT_LEN + CRC32 */
+#define MAX_FRAME_BYTES (FRAME_HDR_LEN + PKT_LEN + 4)
 
 struct frame {
     unsigned char kind;

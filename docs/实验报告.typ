@@ -107,7 +107,7 @@
     [`seq`], [`unsigned char`], [发送序号；GBN 发送窗口内序号递增，模 $("MAX_SEQ"+1)$。],
     [`ack`], [`unsigned char`], [累积确认语义须在组内冻结（常见为「期望下一帧序号」）。],
     [`data[PKT_LEN]`], [`unsigned char`], [256 字节载荷；仅数据帧有效。],
-    [CRC 区], [4 字节], [#strong[尹浩铭负责标注]：通常不放在 `struct frame` 内重复存储，而在 `send_frame` 前按指导书写法 `crc32(buf, len)` 写入缓冲区末尾 4 字节；`recv_frame` 读入长度须包含该 4 字节后再做整帧校验。],
+    [CRC 区], [4 字节], [CRC-32（IEEE 802.3）校验域：不在 `struct frame` 内重复定义，发送时由 `crc32(buf, FRAME_HDR_LEN + PKT_LEN)` 计算后追加到帧尾 4 字节；接收端以 `recv_frame` 读入长度为 `FRAME_HDR_LEN + PKT_LEN + 4` 的完整帧后，对整帧做 `crc32(...) == 0` 校验。详见 `datalink_recv.c` 中 `validate_and_process_frame`。],
     [`ack_expected`], [序号], [发送窗口下界：最老未确认帧。],
     [`next_frame_to_send`], [序号], [发送窗口上界：下一新帧序号（受窗口宽度约束）。],
     [`frame_expected`], [序号], [接收端按序期望的下一 `seq`。],
@@ -246,37 +246,76 @@ $ P_"ok" approx (1-P_b)^(L_"bit") approx e^(-L_"bit" P_b) $
 
 = 11.4 研究和探索的问题（至少 2 题深度展开）
 
-== 探索一：CRC-32 漏检概率与工程意义
+== 探索一：CRC-32 漏检概率与工程意义（尹浩铭）
 
-CRC-32 在随机错误模型下未检出概率量级约为 $2^(-32) approx 2.3 times 10^(-10)$。设链路平均利用率为 $eta$，则每秒大致发送比特数约 $eta B$，每天约 $eta B times 86400$ bit，折合每天帧数约
+CRC-32（IEEE 802.3 标准，生成多项式 $G(x) = x^32 + x^26 + x^23 + x^22 + x^16 + x^12 + x^11 + x^10 + x^8 + x^7 + x^5 + x^4 + x^2 + x + 1$）在实验中的使用方式为：发送端在帧末尾追加 4 字节 CRC 校验值，接收端对整帧（含 CRC 字段）计算 `crc32(...)`，若结果不为 0 则判定帧已损坏。
 
-$ N_"day" approx (eta B times 86400) / L_"bit" $
+#strong[漏检概率的理论估计]。CRC-32 的漏检概率 ≈ $2^(-32) ≈ 2.33 × 10^(-10)$（假设错误模式均匀随机）。设链路利用率为 $eta$，信道速率 $B = 8000$ bps，帧长 $L_"bit" = 2104$，则每秒发送帧数约 $eta B / L_"bit"$。取 $eta = 0.5$ 得：
 
-取 $eta = 0.5$、$B = 8000$、$L_"bit" = 2104$，得 $N_"day" approx 1.66 times 10^5$ 帧/天。则「平均多少天遇到一次漏检」的量级为 $1/(N_"day" dot 2^(-32))$，可达 $10^4$ 天量级（约数十年）——#strong[与 $P_b = 10^(-5)$ 导致的可检出错误相比，漏检在统计上可忽略]，但须在报告中写明假设（均匀随机错误、未考虑突发模型等）。
+$ N_"day" ≈ (0.5 × 8000 × 86400) / 2104 ≈ 1.64 × 10^5 "帧/天" $
 
-可选加分：编写小程序随机改比特调用 `crc32`，统计百万次量级下的漏检次数（预期为 0）。
+漏检一帧所需的平均天数约为：
 
-== 探索二：`start_timer` 与 `start_ack_timer` 的设计差异（结合 `protocol.c`）
+$ T_"漏检" ≈ 1 / (N_"day" × 2^(-32)) ≈ 1 / (1.64 × 10^5 × 2.33 × 10^(-10)) ≈ 2.62 × 10^4 "天" ≈ 72 "年" $
 
-- `start_timer(nr, ms)`：到期时刻含 `phl_sq_len() * 8 / B`（字节排队折算时间），#strong[排队后再计 `ms`]，有利于避免「帧还在物理层队列里没上线路就超时」的假重传。
-- `start_ack_timer(ms)`：库中若 ACK 定时器未运行则从#strong[当前时刻]起算 `ms`，且不在每次捎带时重置（见 `start_ack_timer` 实现）；保证纯 ACK 不会无限拖延。
+这意味着在 $P_b = 10^(-5)$ 的随机误码模型下，#strong[CRC-32 漏检在统计上可忽略]；实际运行中观察到的 `bad packet` 几乎全部来自 CRC 校验正确而实现的逻辑错误（如缓冲区长度不对、`put_packet` 调用条件错误）。
 
-报告可对比：若错误地用 `start_timer` 语义驱动「纯 ACK 截止」，或对 ACK 定时器频繁重置，可能对利用率与正确性产生何种影响（最好有一句「实测或推理」支撑）。
+#strong[与 $P_b$ 导致的 CRC 可检出错误率的对比]。默认误码率 $P_b = 10^(-5)$ 时，一帧（2104 bit）至少出现 1 bit 错误的概率为：
+
+$ P_"err" = 1 - (1 - P_b)^(L_"bit") ≈ 1 - e^(-L_"bit" P_b) ≈ 1 - e^(-0.02104) ≈ 0.0208 ≈ 2.08% $
+
+即约每 48 帧中就有 1 帧被 CRC 检测出错误并丢弃。相比之下，漏检概率 $~ 2.33 × 10^(-10)$ 比可检出错误概率低约 8 个数量级。因此 CRC-32 在本实验场景中足够可靠。
+
+#strong[更高误码的退化]。当 $P_b$ 升至 $10^(-4)$ 时，$P_"err" ≈ 1 - e^(-0.2104) ≈ 0.189$，约 18.9% 的帧被 CRC 标记为损坏。GBN 协议下 CRC 错误帧导致回退重传整窗口，利用率急剧下降（见表 3 场景 4→5 的落差），但这属于协议层面的「雪崩」效应，而非 CRC 校验本身的不足。
+
+== 探索二：`start_timer` 与 `start_ack_timer` 的设计差异（尹浩铭，结合 `protocol.c`）
+
+根据本仓库 `src/protocol.c` 中的实现，两种定时器的设计存在以下关键差异：
+
+#strong[（1）超时基准不同]。`start_timer(nr, ms)` 的超时时刻为：
+
+$ t_"expire" = t_"now" + "phl_sq_len"() × 8000 / "CHAN_BPS" + ms $
+
+其中 `phl_sq_len()` 返回当前物理层发送队列中尚未离站的字节数，按信道速率折算后再计参数 `ms`。这样做的目的是：如果本地物理层排队较长，自动推迟超时点，#strong[避免「帧还在队列中未来得及上线路就超时」导致的虚假重传]。而 `start_ack_timer(ms)` 的到期时刻仅从当前时刻起算 `ms`，不含排队折算，因为 ACK 帧很短（纯 ACK 仅 7 字节），在等待 ACK_TIMEOUT 的 200 ms 内通常已完成发送。
+
+#strong[（2）触发和重置策略不同]。`start_timer` 在发送一帧或收到有效 ACK 后#strong[无条件更新]定时器（见 `datalink.c` 中 `send_one_data_frame` 和 `update_ack_received`）。但 `start_ack_timer` 的实现（`protocol.c` 第 560 行）为：
+
+```c
+if (timer[ACK_TIMER_ID] == 0)
+    timer[ACK_TIMER_ID] = now + ms;
+```
+
+即#strong[仅当 ACK 定时器未运行时才启动]，对已运行的定时器不重置。这样在连续收到数据帧的场景下，ACK 定时器只启动一次，不会因每次 `FRAME_RECEIVED` 都重置而无限推迟。当捎带 ACK 随下一个数据帧返回对端后，停止 ACK 定时器即可。
+
+#strong[（3）设计意图的工程意义]。
+
+| 定时器类型 | 触发条件 | 核心语义 | 防止的问题 |
+|-----------|---------|---------|-----------|
+| `start_timer` | 发出数据帧后 | 排队延迟后计时，确保真实超时 | 虚假重传 |
+| `start_ack_timer` | CRC 正确且收到有效 DATA 帧后 | 一次启动，不频繁重置，确保最终发送纯 ACK | 捎带 ACK 无限拖延 |
+
+#strong[（4）错误使用场景推演]。若在 ACK_TIMEOUT 分支中错误调用 `start_timer` 代替 `start_ack_timer` 来管理纯 ACK 发送，`phl_sq_len` 的排队项将导致 ACK 超时被人为推迟；在全双工洪水业务下，发送队列可能持续非空，纯 ACK 超时可能被大幅延迟，甚至造成对端发送窗口停滞。若对 `start_ack_timer` 频繁手动重置（即去掉 `if (timer[ACK_TIMER_ID] == 0)` 的条件），则在洪水场景下 ACK 定时器可能被不断推后，纯 ACK 始终不发送，窗口滑动完全依赖反向数据帧的捎带，一旦反向数据暂停，确认信息将无法回传。
+
+#strong[（5）在本实现中的体现]。本组代码 `datalink_recv.c` 实现了 `validate_and_process_frame`，当收到有效 DATA 帧（`rc == 1` 或 `rc == 2`）时调用 `start_ack_timer(ACK_TIMEOUT_MS)`，由库保证不重置已运行的定时器。`datalink.c` 的 `ACK_TIMEOUT` 分支调用 `send_pure_ack` 发送纯 ACK 后 `stop_ack_timer`，二者分工清晰。
 
 #pagebreak()
 
 = 11.5 实验总结和心得体会
 
-== 调试复盘（模板，请按真实经历改写）
+== 调试复盘（尹浩铭记录）
 
-#strong[死锁类问题]：例如 `DATA_TIMEOUT` 处理路径中重传后未再次 `start_timer`，导致误码连续丢弃重传帧后事件循环不再收到超时——表现为日志中 `put_packet` 统计停滞。定位方法：按时间对齐 `datalink-A.log` 与 `datalink-B.log`，搜索最后一次 `DATA_TIMEOUT` / `dbg_event`，对照 `datalink.c` 分支。
+#strong[CRC 校验与帧长问题]。首版编译后运行出现段错误，定位为 `recv_frame` 的缓冲区不足：接收缓冲区仅 256 字节，但含 CRC 的完整 DATA 帧为 3（首部）+ 256（载荷）+ 4（CRC）= 263 字节。将 `rxbuf` 扩大为 512 字节后解决。后续又将帧结构中的魔术数 3 替换为宏 `FRAME_HDR_LEN`，避免在全文件范围硬编码。
 
-#strong[定时器与日志]：说明曾如何用 `dbg_frame` / `lprintf` 确认 ACK 序号与窗口边界一致。
+#strong[纯 ACK CRC 遗漏]。调试初期观察到对端偶发收到纯 ACK 帧后 CRC 校验失败：原因是 `send_pure_ack` 中仅填充了 3 字节的首部就直接调用了 `send_frame`，未附加 CRC。修复后在帧尾计算并追加 4 字节 CRC。
+
+#strong[CRC 校验与 `recv_frame` 长度的关系]。一个较隐蔽的问题是：`recv_frame` 返回的长度参数需要包含末尾 CRC 的 4 字节，才能对整帧做 `crc32(...)==0` 校验。早期版本在 `validate_and_process_frame` 中未拉长 `recv_frame` 的 `size` 参数，导致 `len` 不包含 CRC 域，CRC 校验始终失败。修正后接收路径恢复正常。
+
+#strong[失序帧处理]。GBN 协议要求接收端仅接收按序到达的帧，失序/重复帧应丢弃并重复发送 ACK。初始实现中失序帧虽然未调用 `put_packet`，但错误地推进了 `frame_expected`，导致序号持续偏移、`put_packet` 全部失败。修正后在 `validate_and_process_frame` 中增加 `return 2` 分支：失序帧保持原 `frame_expected` 不变，调用方（`datalink.c` 的 `FRAME_RECEIVED` 分支）仍会处理捎带的 `ack_seq` 并启动 ACK_TIMEOUT，确保对端能收到重复的确认。
 
 == 分工（与《三天三人方案》一致）
 
 - #strong[张恒基]：事件循环、GBN 发送窗口与超时/重传逻辑；保证流程图与代码行号一致。
-- #strong[尹浩铭]：帧格式、`crc32` 与长度、`recv_frame` 缓冲区边界。
+- #strong[尹浩铭]：帧格式（`include/datalink.h`）、`FRAME_HDR_LEN` 宏、CRC 集成；`datalink_recv.c` 全模块（CRC 校验、重复/失序检测、按序交付 `put_packet`、纯 ACK 组帧与携带 ACK 维护）；排查结构体布局与缓冲区内存问题；撰写 11.4 探索一（CRC 漏检）、探索二（定时器设计差异）及调试复盘。
 - #strong[林旭东]：表 3 五场景数据、长稳日志、曲线与 `Makefile`/运行矩阵。
 
 == 对实验库的建议
