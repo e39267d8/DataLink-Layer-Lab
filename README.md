@@ -13,7 +13,7 @@
 
 | 角色 | 文件 | 说明 |
 |------|------|------|
-| 学生完成 | `src/datalink.c`、`include/datalink.h` | 链路层状态机与帧格式等自定义数据结构 |
+| 学生完成 | `src/datalink.c`、`src/datalink_recv.c`、`include/datalink.h` | `datalink.c`：事件循环与 GBN 发送侧；`datalink_recv.c`：接收校验、纯 ACK（尹浩铭主责，可与 `datalink.c` 分工迭代） |
 | 教师库 | `src/protocol.c`、`include/protocol.h` | 仿真物理层、网络层、事件与定时器接口 |
 | 教师库 | `src/lprintf.c`、`include/lprintf.h` | 带时间戳的日志 |
 | 教师库 | `src/crc32.c` | CRC-32（与 IEEE 802.3 相同多项式，指导书 8.9） |
