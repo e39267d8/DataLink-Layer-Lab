@@ -27,7 +27,7 @@
     row-gutter: 1.4em,
     align(right)[*小组成员：*], align(left)[张恒基、尹浩铭、林旭东],
     align(right)[*适用周期：*], align(left)[连续 3 个工作日（可顺延为 3 个「实验日」）],
-    align(right)[*文档版本：*], align(left)[2026-05（v2：对齐 #raw("docs/实验报告.typ") 与 #raw("docs/实验要求对照检查清单.md")）],
+    align(right)[*文档版本：*], align(left)[2026-05（v3：补充 2026-05-15 收尾状态与实测结论）],
   )
 ]
 
@@ -42,6 +42,13 @@
 本方案将指导书第 7 节（熟悉环境 → 设计 → 编码调试 → 测试 → 报告）压缩为 #strong[3 天、3 人并行]，并与 #strong[第 11 节实验报告结构]、#strong[第 9 节表 3]、#strong[第 10 节研究与探索]及仓库内 #raw("docs/实验要求对照检查清单.md") 的勾选项对齐。
 
 在减少阻塞的前提下保证：#strong[帧格式与窗口语义先冻结]、#strong[事件循环单文件主控]（#raw("src/datalink.c")）、#strong[每日有可演示增量]、#strong[报告叙述与 #raw("src/protocol.c") / 自研宏一致]（尤其 #raw("start_timer")、#raw("phl_sq_len")、#raw("PHL_SQ_LEVEL")）。
+
+== 2026-05-15 收尾状态
+
+- #strong[代码]：搭载 ACK 的 GBN 主体已完成；根目录 #raw("src/datalink.c")、#raw("src/datalink_recv.c")、#raw("include/datalink.h") 为准。最终宏为 #raw("WINDOW_SIZE=3")、#raw("MAX_SEQ=255")、#raw("NR_BUFS=256")、#raw("DATA_TIMEOUT_MS=600")、#raw("ACK_TIMEOUT_MS=200")。
+- #strong[关键修正]：早期 #raw("MAX_SEQ=7") 在默认误码长跑中暴露旧重传帧跨序号周期误收风险；已改用 1 字节完整序号空间，窗口大小不变。
+- #strong[测试]：表 3 五场景均按 #raw("-t 600") 跑满 10 分钟，日志名为 #raw("table3-*.log")；所有场景自然 #raw("Quit")，未出现 #raw("bad packet") / #raw("Abort")。数据已回填 #raw("docs/实验过程记录.md")、#raw("docs/实验报告.typ") 与根目录 #raw("report.typ")。
+- #strong[仍属流程外]：纸质封面、课程平台上传、现场演示按院系通知执行；若老师要求更长稳态证据，可把表 3 命令中的 #raw("-t 600") 改为 #raw("-t 1200") 复跑。
 
 #pagebreak()
 

@@ -42,7 +42,7 @@ static void send_one_data_frame(void)
     unsigned char tx[MAX_FRAME_BYTES];
     unsigned int crc;
     int idx;
-    int wire_len = 3 + PKT_LEN + (int)sizeof(unsigned int);
+    int wire_len = FRAME_HDR_LEN + PKT_LEN + (int)sizeof(unsigned int);
     unsigned M = (unsigned)(MAX_SEQ + 1);
     unsigned used = (unsigned)((next_frame_to_send + M - ack_expected) % M);
 
@@ -52,11 +52,11 @@ static void send_one_data_frame(void)
     tx[0] = FRAME_DATA;
     tx[1] = next_frame_to_send;
     tx[2] = dl_get_frame_expected();
-    if (get_packet(tx + 3) != PKT_LEN)
+    if (get_packet(tx + FRAME_HDR_LEN) != PKT_LEN)
         return;
 
-    crc = crc32(tx, (unsigned int)(3 + PKT_LEN));
-    memcpy(tx + 3 + PKT_LEN, &crc, sizeof(crc));
+    crc = crc32(tx, (unsigned int)(FRAME_HDR_LEN + PKT_LEN));
+    memcpy(tx + FRAME_HDR_LEN + PKT_LEN, &crc, sizeof(crc));
 
     idx = next_frame_to_send % NR_BUFS;
     memcpy(frame_buffer[idx], tx, (size_t)wire_len);
