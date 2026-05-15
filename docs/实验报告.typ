@@ -88,7 +88,7 @@
 - 编译器：GCC（`Makefile`）或 Visual Studio（`Lab1-Windows-VS2017` 等工程）。
 - 代码版本：（建议填写 `git rev-parse --short HEAD`），便于与附录日志、截图交叉核验。
 
-#strong[与实验库的一致性说明]：下文定时器、`phl_sq_len` 的叙述直接对应本仓库 `src/protocol.c`；滑动窗口状态机与宏常量以你们最终实现为准——#strong[定稿前请对照 `src/datalink.c` 将宏名、数值与行号更新为一致]。
+#strong[与实验库的一致性说明]：下文定时器、`phl_sq_len` 的叙述直接对应本仓库 `src/protocol.c`；滑动窗口状态机与宏常量以最终实现为准：`WINDOW_SIZE = 3`、`MAX_SEQ = 255`、`DATA_TIMEOUT_MS = 600`、`ACK_TIMEOUT_MS = 200`。
 
 #pagebreak()
 
@@ -116,13 +116,28 @@
   caption: [帧与核心状态变量（与 `include/datalink.h` 及实现保持一致）],
 ]
 
-#strong[序号空间与窗口]：若序号共 $M = "MAX_SEQ"+1$ 个编号，GBN 一般要求未确认帧个数 $W <= M - 1$（避免收发对窗口解释歧义）。具体 $M$、$W$ 取值在「11.3 参数推导」与代码宏中须一致。
+#strong[序号空间与窗口]：`seq` / `ack` 字段为 1 字节，本实现使用完整 $M = "MAX_SEQ"+1 = 256$ 个编号（0–255），发送窗口仍取 $W = 3$。GBN 一般要求 $W <= M - 1$，本实现远小于上限；较大的序号空间用于避免误码重传时旧帧在物理层队列中滞留、序号过早回绕后被接收端误认为新帧。
 
 == （2）模块结构
 
-建议用一张「事件 → 处理函数」表或简图说明：`protocol_init` → 主循环 `wait_for_event` → 各 `case` 分支。关键接口来自 `protocol.h`：`get_packet` / `put_packet`、`send_frame` / `recv_frame`、定时器与 `enable_network_layer` / `disable_network_layer`。
+主控结构为：`protocol_init` → 主循环 `wait_for_event` → `switch(event)` 分发。关键接口来自 `protocol.h`：`get_packet` / `put_packet`、`send_frame` / `recv_frame`、定时器与 `enable_network_layer` / `disable_network_layer`。
 
-#strong[张恒基撰写建议]：在图中标出 `DATA_TIMEOUT` 与 `ACK_TIMEOUT` 的入口，并在正文用「见 `datalink.c` 第 x–y 行」与验收要求对齐（定稿时用真实行号替换占位符 x、y）。
+#align(center)[
+  #table(
+    columns: (1.2fr, 2fr, 1.1fr),
+    inset: 6pt,
+    align: (left, left, center),
+    stroke: 0.5pt + gray,
+    [*模块 / 分支*], [*主要职责*], [*代码位置*],
+    [`send_one_data_frame`], [取网络层分组、组 DATA 帧、捎带 ACK、追加 CRC、缓存并发送], [`src/datalink.c:40`],
+    [`update_ack_received`], [按累积 ACK 推进发送窗口，维护数据定时器], [`src/datalink.c:22`],
+    [`resend_window`], [`DATA_TIMEOUT` 后从 `ack_expected` 起重传窗口内帧], [`src/datalink.c:73`],
+    [`FRAME_RECEIVED`], [调用 `validate_and_process_frame`，再处理 ACK、按序上交、启动 ACK 定时器], [`src/datalink.c:123`],
+    [`ACK_TIMEOUT`], [调用 `send_pure_ack` 发送纯 ACK], [`src/datalink.c:148`],
+    [`refresh_network_layer_gate`], [根据窗口占用开关网络层], [`src/datalink.c:87`],
+  ),
+  caption: [事件循环与主要函数位置],
+]
 
 == （3）算法流程与异常路径
 
@@ -214,18 +229,18 @@ $ P_"ok" approx (1-P_b)^(L_"bit") approx e^(-L_"bit" P_b) $
     table.header(
       [*序号*], [*场景*], [*A 命令*], [*B 命令*], [*A 利用率 %*], [*B 利用率 %*], [*运行时长 / 备注*],
     ),
-    [1], [无误码], [（填写）], [（填写）], [ ], [ ], [$>= 10$ min],
-    [2], [默认业务], [（填写）], [（填写）], [ ], [ ], [ ],
-    [3], [双端洪水+无误码], [（填写）], [（填写）], [ ], [ ], [ ],
-    [4], [双端洪水（默认误码）], [（填写）], [（填写）], [ ], [ ], [ ],
-    [5], [洪水+高误码], [（填写）], [（填写）], [ ], [ ], [ ],
+    [1], [无误码], [#text(size: 7pt)[#raw("-u -d0 -t 600 -p 59281 -l table3-1-utopia-A.log A")]], [#text(size: 7pt)[#raw("-u -d0 -t 600 -p 59281 -l table3-1-utopia-B.log B")]], [39.36], [69.64], [600 s；Err 0],
+    [2], [默认业务], [#text(size: 7pt)[#raw("-d0 -t 600 -p 59282 -l table3-2-default-A.log A")]], [#text(size: 7pt)[#raw("-d0 -t 600 -p 59282 -l table3-2-default-B.log B")]], [34.18], [61.81], [600 s；Err 20/33],
+    [3], [双端洪水+无误码], [#text(size: 7pt)[#raw("-f -u -d0 -t 600 -p 59283 -l table3-3-flood-utopia-A.log A")]], [#text(size: 7pt)[#raw("-f -u -d0 -t 600 -p 59283 -l table3-3-flood-utopia-B.log B")]], [72.32], [72.30], [600 s；Err 0],
+    [4], [双端洪水（默认误码）], [#text(size: 7pt)[#raw("-f -d0 -t 600 -p 59284 -l table3-4-flood-default-A.log A")]], [#text(size: 7pt)[#raw("-f -d0 -t 600 -p 59284 -l table3-4-flood-default-B.log B")]], [63.69], [62.80], [600 s；Err 32/34],
+    [5], [洪水+高误码], [#text(size: 7pt)[#raw("-f -b 1e-4 -d0 -t 600 -p 59285 -l table3-5-flood-ber1e-4-A.log A")]], [#text(size: 7pt)[#raw("-f -b 1e-4 -d0 -t 600 -p 59285 -l table3-5-flood-ber1e-4-B.log B")]], [32.02], [31.24], [600 s；Err 264/255],
   ),
-  caption: [表 3 实测数据（#strong[勿直接照抄他组或旧版参考表]；利用率公式须与 `put_packet` 打印的 bps 与 8000 bps 定义一致）],
+  caption: [表 3 实测数据；五场景均自然 `Quit`，未出现 `bad packet` / `Abort`。利用率取日志末次 `packets received` 行中 bps 与 8000 bps 的比例。],
 ]
 
-#strong[根因分析写法]：每个场景写 2–3 句——现象（利用率高低）、机制（窗口 / 停发 / 误码 / GBN 回退）、与理论表或上界的差距来源（ACK 捎带延迟、物理层 1 ms 间隔、`start_timer` 排队项、CPU 调度等）。
+#strong[结果分析]。场景 3 在无误码且双端持续洪水时，两端利用率稳定在约 72.3%，说明数据链路层可持续推进窗口且没有死锁。场景 4 在默认误码下仍保持 63% 左右，CRC 错误被丢弃并通过 GBN 超时重传恢复。场景 5 将误码率升至 $10^(-4)$ 后利用率降到约 31%–32%，符合 GBN 在高误码下「一处出错、窗口回退、多帧重传」导致吞吐下降的预期。
 
-== 实测与理论对比（示例表头）
+== 实测与理论对比
 
 #align(center)[
   #table(
@@ -236,10 +251,11 @@ $ P_"ok" approx (1-P_b)^(L_"bit") approx e^(-L_"bit" P_b) $
     table.header(
       [*场景*], [*理论参考 %*], [*实测 %*], [*差距*], [*原因分析要点*],
     ),
-    [3 洪水无误码], [（计算）], [（填写）], [ ], [ ],
-    [5 洪水 $10^(-4)$], [（计算）], [（填写）], [ ], [GBN 回退、重传放大],
+    [3 洪水无误码], [载荷上界 $256/263 approx 97.34$], [72.31], [约 -25.0], [`WINDOW_SIZE=3`、ACK 等待、事件调度与物理层排队使实现低于理想满载],
+    [4 洪水默认误码], [$97.34 times e^(-2104 times 10^(-5)) approx 95.31$], [63.25], [约 -32.1], [误码触发 CRC 丢帧与 GBN 回退，实际代价大于独立成功率缩放],
+    [5 洪水 $10^(-4)$], [$97.34 times e^(-2104 times 10^(-4)) approx 78.95$], [31.63], [约 -47.3], [高误码下窗口内多帧被重复发送，重传放大明显],
   ),
-  caption: [理论值须注明公式与近似条件；若与参考可执行文件对标，另起一行说明版本与参数是否一致],
+  caption: [理论值为简化上界，仅用于解释数量级；实测值取 A/B 末次利用率均值],
 ]
 
 #pagebreak()
@@ -274,7 +290,7 @@ $ P_"err" = 1 - (1 - P_b)^(L_"bit") ≈ 1 - e^(-L_"bit" P_b) ≈ 1 - e^(-0.02104
 
 #strong[（1）超时基准不同]。`start_timer(nr, ms)` 的超时时刻为：
 
-$ t_"expire" = t_"now" + "phl_sq_len"() × 8000 / "CHAN_BPS" + ms $
+$ t_"expire" = t_"now" + "phl_sq_len"() × 8000 / "CHAN_BPS" + "ms" $
 
 其中 `phl_sq_len()` 返回当前物理层发送队列中尚未离站的字节数，按信道速率折算后再计参数 `ms`。这样做的目的是：如果本地物理层排队较长，自动推迟超时点，#strong[避免「帧还在队列中未来得及上线路就超时」导致的虚假重传]。而 `start_ack_timer(ms)` 的到期时刻仅从当前时刻起算 `ms`，不含排队折算，因为 ACK 帧很短（纯 ACK 仅 7 字节），在等待 ACK_TIMEOUT 的 200 ms 内通常已完成发送。
 
@@ -312,6 +328,8 @@ if (timer[ACK_TIMER_ID] == 0)
 
 #strong[失序帧处理]。GBN 协议要求接收端仅接收按序到达的帧，失序/重复帧应丢弃并重复发送 ACK。初始实现中失序帧虽然未调用 `put_packet`，但错误地推进了 `frame_expected`，导致序号持续偏移、`put_packet` 全部失败。修正后在 `validate_and_process_frame` 中增加 `return 2` 分支：失序帧保持原 `frame_expected` 不变，调用方（`datalink.c` 的 `FRAME_RECEIVED` 分支）仍会处理捎带的 `ack_seq` 并启动 ACK_TIMEOUT，确保对端能收到重复的确认。
 
+#strong[序号空间过小导致旧帧误收]。一次默认误码长跑中，早期 `MAX_SEQ=7` 的版本在约 40 秒出现 `Network Layer received a bad packet`。复查日志后判断：GBN 超时重传会把窗口内帧重新排入物理层队列，若旧重传帧滞留到接收端序号快速绕回，就可能被误认为下一轮的新帧并错误上交网络层。最终使用 `unsigned char` 的完整 0–255 序号空间，将 `MAX_SEQ` / `NR_BUFS` 调整为 255 / 256，窗口大小仍为 3。复测表 3 五场景各 600 秒均自然退出，无坏分组。
+
 == 分工（与《三天三人方案》一致）
 
 - #strong[张恒基]：事件循环、GBN 发送窗口与超时/重传逻辑；保证流程图与代码行号一致。
@@ -336,12 +354,12 @@ if (timer[ACK_TIMER_ID] == 0)
     inset: 8pt,
     align: (left, center),
     stroke: 0.5pt + gray,
-    [窗口宏 `MAX_WINDOW_SIZE` / `MAX_SEQ` 与报告 11.3 推导一致], [□],
-    [`DATA_TIMEOUT_MS`、`ACK_DELAY_MS`（或等价名）与推导一致并在注释中写明 RTT 估算], [□],
-    [表 3 命令行、利用率与日志文件名一致], [□],
-    [流程图标注的 `datalink.c` 行号已更新], [□],
-    [附录含 $>= 20$ 分钟量级稳定运行摘录], [□],
-    [研究与探索 $>= 2$ 题，至少一题含量化或小程序], [□],
+    [窗口宏 `WINDOW_SIZE` / `MAX_SEQ` 与报告 11.3 推导一致], [✓],
+    [`DATA_TIMEOUT_MS`、`ACK_TIMEOUT_MS` 与推导一致并在注释中写明 RTT 估算], [✓],
+    [表 3 命令行、利用率与日志文件名一致], [✓],
+    [流程图标注的 `datalink.c` 行号已更新], [✓],
+    [附录含 600 秒稳定运行摘录], [✓],
+    [研究与探索 $>= 2$ 题，至少一题含量化或小程序], [✓],
   ),
 ]
 
@@ -349,7 +367,20 @@ if (timer[ACK_TIMER_ID] == 0)
 
 == 关键日志摘录
 
-（粘贴 `datalink-A.log` / `datalink-B.log` 中带时间戳的 `put_packet` 输出；说明场景与总时长。）
+以下为表 3 末次统计行摘录，日志均在仓库根目录运行时生成：
+
+```text
+table3-1-utopia-A.log        598.908 .... 919 packets received, 3149 bps, 39.36%, Err 0 (0.0e+00)
+table3-1-utopia-B.log        598.924 .... 1628 packets received, 5571 bps, 69.64%, Err 0 (0.0e+00)
+table3-2-default-A.log       599.042 .... 798 packets received, 2734 bps, 34.18%, Err 20 (1.0e-05)
+table3-2-default-B.log       599.073 .... 1444 packets received, 4945 bps, 61.81%, Err 33 (1.0e-05)
+table3-3-flood-utopia-A.log  599.383 .... 1691 packets received, 5786 bps, 72.32%, Err 0 (0.0e+00)
+table3-3-flood-utopia-B.log  599.570 .... 1691 packets received, 5784 bps, 72.30%, Err 0 (0.0e+00)
+table3-4-flood-default-A.log 598.565 .... 1488 packets received, 5095 bps, 63.69%, Err 32 (9.4e-06)
+table3-4-flood-default-B.log 599.669 .... 1470 packets received, 5024 bps, 62.80%, Err 34 (1.0e-05)
+table3-5-flood-ber1e-4-A.log 598.441 .... 748 packets received, 2561 bps, 32.02%, Err 264 (1.0e-04)
+table3-5-flood-ber1e-4-B.log 595.204 .... 726 packets received, 2500 bps, 31.24%, Err 255 (9.9e-05)
+```
 
 // 如需插图：将 PNG 放在 docs/assets/ 下
 // #figure(image("assets/利用率曲线.png", width: 85%), caption: [理论 vs 实测利用率])

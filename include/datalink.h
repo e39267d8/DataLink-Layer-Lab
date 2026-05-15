@@ -12,9 +12,13 @@
 #define FRAME_ACK  2
 #define FRAME_NAK  3
 
-/* 序号空间与发送窗口（与实验报告 11.3、张恒基分工文档一致） */
-#define MAX_SEQ       7
-#define NR_BUFS       8
+/*
+ * 序号空间与发送窗口（与实验报告 11.3、张恒基分工文档一致）。
+ * seq/ack 字段为 1 字节，使用完整 0..255 空间；WINDOW_SIZE 仍按 BDP 取 3。
+ * 较大的序号空间能避免误码重传时旧帧在物理层队列中滞留、序号过早回绕后被误收。
+ */
+#define MAX_SEQ       255
+#define NR_BUFS       256
 /*
  * WINDOW_SIZE：按「字节口径」带宽时延积估算——
  * RTT = 2×270 ms = 540 ms，8000 bps × 0.54 s = 4320 bit = 540 字节；
