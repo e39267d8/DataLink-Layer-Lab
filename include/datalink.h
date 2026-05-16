@@ -14,7 +14,7 @@
 
 /*
  * 序号空间与发送窗口（与实验报告 11.3、张恒基分工文档一致）。
- * seq/ack 字段为 1 字节，使用完整 0..255 空间；WINDOW_SIZE 仍按 BDP 取 3。
+ * seq/ack 字段为 1 字节，使用完整 0..255 空间；WINDOW_SIZE 在 BDP 基础上略放大以缓解对称死锁。
  * 较大的序号空间能避免误码重传时旧帧在物理层队列中滞留、序号过早回绕后被误收。
  */
 #define MAX_SEQ       255
@@ -23,9 +23,9 @@
  * WINDOW_SIZE：按「字节口径」带宽时延积估算——
  * RTT = 2×270 ms = 540 ms，8000 bps × 0.54 s = 4320 bit = 540 字节；
  * 若整帧约 260 字节（256 载荷 + 帧头 + CRC），540/260 ≈ 2.08，向上取 3。
- * 教材比特公式 (2*t_p+t_tx)/t_tx 亦可得约 3.05，取 3 或 4 均可；本组取 3 以减轻误码下 GBN 回退代价。
+ * 教材比特公式 (2*t_p+t_tx)/t_tx 亦可得约 3.05；为缓解全双工对称死锁，运行取 5。
  */
-#define WINDOW_SIZE   3
+#define WINDOW_SIZE   5
 
 /* 定时器：数据重传使用单一编号 0（须 < ACK_TIMER，见 protocol.c） */
 #define DATA_TIMER_ID 0
@@ -35,8 +35,8 @@
  * 库中 start_timer 另含 phl_sq_len 排队项，见 protocol.c。
  */
 #define DATA_TIMEOUT_MS 600
-/* ACK 搭载：RTT 大时不宜过长等待捎带，避免对端 DATA 超时 */
-#define ACK_TIMEOUT_MS  200
+/* ACK 搭载：缩短空等，尽快释放对端发送窗口 */
+#define ACK_TIMEOUT_MS  50
 
 /* 帧首部长度：kind(1) + seq(1) + ack(1) */
 #define FRAME_HDR_LEN   3
