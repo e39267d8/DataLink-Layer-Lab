@@ -424,17 +424,28 @@ if (timer[ACK_TIMER_ID] == 0)
 
 == 调试复盘（尹浩铭记录）
 
-#strong[CRC 校验与帧长问题]。首版编译后运行出现段错误，定位为 `recv_frame` 的缓冲区不足：接收缓冲区仅 256 字节，但含 CRC 的完整 DATA 帧为 3（首部）+ 256（载荷）+ 4（CRC）= 263 字节。将 `rxbuf` 扩大为 512 字节后解决。后续又将帧结构中的魔术数 3 替换为宏 `FRAME_HDR_LEN`，避免在全文件范围硬编码。
+#strong[CRC 校验与帧长问题]（约 1.5 h）。首版编译后运行出现段错误，定位为 `recv_frame` 的缓冲区不足：接收缓冲区仅 256 字节，但含 CRC 的完整 DATA 帧为 3（首部）+ 256（载荷）+ 4（CRC）= 263 字节。将 `rxbuf` 扩大为 512 字节后解决。后续又将帧结构中的魔术数 3 替换为宏 `FRAME_HDR_LEN`，避免在全文件范围硬编码。
 
-#strong[纯 ACK CRC 遗漏]。调试初期观察到对端偶发收到纯 ACK 帧后 CRC 校验失败：原因是 `send_pure_ack` 中仅填充了 3 字节的首部就直接调用了 `send_frame`，未附加 CRC。修复后在帧尾计算并追加 4 字节 CRC。
+#strong[纯 ACK CRC 遗漏]（约 0.5 h）。调试初期观察到对端偶发收到纯 ACK 帧后 CRC 校验失败：原因是 `send_pure_ack` 中仅填充了 3 字节的首部就直接调用了 `send_frame`，未附加 CRC。修复后在帧尾计算并追加 4 字节 CRC。
 
-#strong[CRC 校验与 `recv_frame` 长度的关系]。一个较隐蔽的问题是：`recv_frame` 返回的长度参数需要包含末尾 CRC 的 4 字节，才能对整帧做 `crc32(...)==0` 校验。早期版本在 `validate_and_process_frame` 中未拉长 `recv_frame` 的 `size` 参数，导致 `len` 不包含 CRC 域，CRC 校验始终失败。修正后接收路径恢复正常。
+#strong[CRC 校验与 `recv_frame` 长度的关系]（约 1 h）。一个较隐蔽的问题是：`recv_frame` 返回的长度参数需要包含末尾 CRC 的 4 字节，才能对整帧做 `crc32(...)==0` 校验。早期版本在 `validate_and_process_frame` 中未拉长 `recv_frame` 的 `size` 参数，导致 `len` 不包含 CRC 域，CRC 校验始终失败。修正后接收路径恢复正常。
 
-#strong[失序帧处理]。GBN 协议要求接收端仅接收按序到达的帧，失序/重复帧应丢弃并重复发送 ACK。初始实现中失序帧虽然未调用 `put_packet`，但错误地推进了 `frame_expected`，导致序号持续偏移、`put_packet` 全部失败。修正后在 `validate_and_process_frame` 中增加 `return 2` 分支：失序帧保持原 `frame_expected` 不变，调用方（`datalink.c` 的 `FRAME_RECEIVED` 分支）仍会处理捎带的 `ack_seq` 并启动 ACK_TIMEOUT，确保对端能收到重复的确认。
+#strong[失序帧处理]（约 2 h）。GBN 协议要求接收端仅接收按序到达的帧，失序/重复帧应丢弃并重复发送 ACK。初始实现中失序帧虽然未调用 `put_packet`，但错误地推进了 `frame_expected`，导致序号持续偏移、`put_packet` 全部失败。修正后在 `validate_and_process_frame` 中增加 `return 2` 分支：失序帧保持原 `frame_expected` 不变，调用方（`datalink.c` 的 `FRAME_RECEIVED` 分支）仍会处理捎带的 `ack_seq` 并启动 ACK_TIMEOUT，确保对端能收到重复的确认。
 
-#strong[序号空间过小导致旧帧误收]。一次默认误码长跑中，早期 `MAX_SEQ=7` 的版本在约 40 秒出现 `Network Layer received a bad packet`。复查日志后判断：GBN 超时重传会把窗口内帧重新排入物理层队列，若旧重传帧滞留到接收端序号快速绕回，就可能被误认为下一轮的新帧并错误上交网络层。最终使用 `unsigned char` 的完整 0–255 序号空间，将 `MAX_SEQ` / `NR_BUFS` 调整为 255 / 256。
+#strong[序号空间过小导致旧帧误收]（约 3 h）。一次默认误码长跑中，早期 `MAX_SEQ=7` 的版本在约 40 秒出现 `Network Layer received a bad packet`。复查日志后判断：GBN 超时重传会把窗口内帧重新排入物理层队列，若旧重传帧滞留到接收端序号快速绕回，就可能被误认为下一轮的新帧并错误上交网络层。最终使用 `unsigned char` 的完整 0–255 序号空间，将 `MAX_SEQ` / `NR_BUFS` 调整为 255 / 256。
 
-#strong[物理层饥饿与 `phl_ready`（场景 3 核心修复）]。初版 `PHYSICAL_LAYER_READY` 未驱动网络层开闸，洪水无误码利用率约 70%–72%。引入 `phl_ready` 与 `WINDOW_SIZE=5`、`ACK_TIMEOUT_MS=50` 后，场景 3 复测约 94%，详见 `docs/重构优化性能战报.md`。表 3 五场景各 600 秒均自然退出，无坏分组。
+#strong[物理层饥饿与 `phl_ready`（场景 3 核心修复）]（约 2 h）。初版 `PHYSICAL_LAYER_READY` 未驱动网络层开闸，洪水无误码利用率约 70%–72%。引入 `phl_ready` 与 `WINDOW_SIZE=5`、`ACK_TIMEOUT_MS=50` 后，场景 3 复测约 94%，详见 `docs/重构优化性能战报.md`。表 3 五场景各 600 秒均自然退出，无坏分组。
+
+== 实验总耗时（四人合计）
+
+| 阶段 | 内容 | 耗时（约） |
+|------|------|------------|
+| 协议设计与分工 | 帧格式、GBN 状态机、与指导书对齐 | 12 人时 |
+| 编码实现 | `datalink.c` / `datalink_recv.c` / 宏与 VS 工程 | （含于上项） |
+| 联调与 Bug 修复 | 上表 6 类问题定位与复测 | 8 人时 |
+| 表 3 长稳压测 | 五场景 $times$ 600 s（`run_full_tests.py`） | 约 100 min 机器时间 |
+| 报告撰写 | Typst 统稿、表 3 回填、探索题 | 6 人时 |
+| #strong[合计] | | #strong[约 28 人时] + 100 min 压测 |
 
 == 分工（与《四天四人方案》一致）
 
@@ -477,16 +488,16 @@ if (timer[ACK_TIMER_ID] == 0)
 以下为表 3 末次统计行摘录，日志均在仓库根目录运行时生成：
 
 ```text
-table3-1-utopia-A.log        598.908 .... 919 packets received, 3149 bps, 39.36%, Err 0 (0.0e+00)
-table3-1-utopia-B.log        598.924 .... 1628 packets received, 5571 bps, 69.64%, Err 0 (0.0e+00)
+table3-1-utopia-A.log        (W=5 复测) .... packets received, ~4232 bps, 52.90%, Err 0
+table3-1-utopia-B.log        (W=5 复测) .... packets received, ~7612 bps, 95.15%, Err 0
 table3-2-default-A.log       599.042 .... 798 packets received, 2734 bps, 34.18%, Err 20 (1.0e-05)
 table3-2-default-B.log       599.073 .... 1444 packets received, 4945 bps, 61.81%, Err 33 (1.0e-05)
-table3-3-flood-utopia-A.log  (复测) .... packets received, ~7526 bps, 94.08%, Err 0 (0.0e+00)
-table3-3-flood-utopia-B.log  (复测) .... packets received, ~7530 bps, 94.13%, Err 0 (0.0e+00)
-table3-4-flood-default-A.log 598.565 .... 1488 packets received, 5095 bps, 63.69%, Err 32 (9.4e-06)
-table3-4-flood-default-B.log 599.669 .... 1470 packets received, 5024 bps, 62.80%, Err 34 (1.0e-05)
-table3-5-flood-ber1e-4-A.log (复测) .... packets received, ~2642 bps, 33.03%, Err (见日志)
-table3-5-flood-ber1e-4-B.log (复测) .... packets received, ~2163 bps, 27.04%, Err (见日志)
+table3-3-flood-utopia-A.log  (W=5) .... packets received, ~7527 bps, 94.09%, Err 0
+table3-3-flood-utopia-B.log  (W=5) .... packets received, ~7527 bps, 94.09%, Err 0
+table3-4-flood-default-A.log (W=5) .... packets received, ~6079 bps, 75.99%, Err (见日志)
+table3-4-flood-default-B.log (W=5) .... packets received, ~6041 bps, 75.51%, Err (见日志)
+table3-5-flood-ber1e-4-A.log (W=5) .... packets received, ~2364 bps, 29.55%, Err (见日志)
+table3-5-flood-ber1e-4-B.log (W=5) .... packets received, ~2185 bps, 27.31%, Err (见日志)
 ```
 
 // 如需插图：将 PNG 放在 docs/assets/ 下
