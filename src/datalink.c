@@ -14,6 +14,15 @@ static unsigned char next_frame_to_send;
 static unsigned char frame_buffer[NR_BUFS][MAX_FRAME_BYTES];
 static int frame_saved_len[NR_BUFS];
 
+/* 物理层发送队列低于阈值后为 1；send_frame 后置 0，等待 PHYSICAL_LAYER_READY */
+static int phl_ready = 1;
+
+static unsigned nbuffered(void)
+{
+    unsigned M = (unsigned)(MAX_SEQ + 1);
+    return (unsigned)((next_frame_to_send + M - ack_expected) % M);
+}
+
 static unsigned char inc_seq(unsigned char s)
 {
     return (unsigned char)((s + 1) % (MAX_SEQ + 1));
@@ -43,10 +52,7 @@ static void send_one_data_frame(void)
     unsigned int crc;
     int idx;
     int wire_len = FRAME_HDR_LEN + PKT_LEN + (int)sizeof(unsigned int);
-    unsigned M = (unsigned)(MAX_SEQ + 1);
-    unsigned used = (unsigned)((next_frame_to_send + M - ack_expected) % M);
-
-    if (used >= (unsigned)WINDOW_SIZE)
+    if (nbuffered() >= (unsigned)WINDOW_SIZE)
         return;
 
     tx[0] = FRAME_DATA;
@@ -63,6 +69,7 @@ static void send_one_data_frame(void)
     frame_saved_len[idx] = wire_len;
 
     send_frame(tx, wire_len);
+    phl_ready = 0;
     next_frame_to_send = inc_seq(next_frame_to_send);
 
     stop_timer(DATA_TIMER_ID);
@@ -79,6 +86,7 @@ static void resend_window(void)
         send_frame(frame_buffer[idx], frame_saved_len[idx]);
         s = inc_seq(s);
     }
+    phl_ready = 0;
     stop_timer(DATA_TIMER_ID);
     if (ack_expected != next_frame_to_send)
         start_timer(DATA_TIMER_ID, DATA_TIMEOUT_MS);
@@ -86,10 +94,11 @@ static void resend_window(void)
 
 static void refresh_network_layer_gate(void)
 {
-    unsigned M = (unsigned)(MAX_SEQ + 1);
-    unsigned used = (unsigned)((next_frame_to_send + M - ack_expected) % M);
+    /* 与 protocol.c 中 PHL_SQ_LEVEL(50) 一致；队列已排空则视为可发，避免漏掉 READY 事件 */
+    if (phl_sq_len() < 50)
+        phl_ready = 1;
 
-    if (used < (unsigned)WINDOW_SIZE)
+    if (nbuffered() < (unsigned)WINDOW_SIZE && phl_ready)
         enable_network_layer();
     else
         disable_network_layer();
@@ -106,7 +115,7 @@ int main(int argc, char **argv)
     ack_expected = 0;
     next_frame_to_send = 0;
 
-    enable_network_layer();
+    disable_network_layer();
 
     for (;;) {
         event = wait_for_event(&arg);
@@ -117,7 +126,7 @@ int main(int argc, char **argv)
             break;
 
         case PHYSICAL_LAYER_READY:
-            /* 物理层发送队列已低于约 50 字节；本实现依赖 send_frame 排队，可在此扩展「待发」逻辑 */
+            phl_ready = 1;
             break;
 
         case FRAME_RECEIVED: {
@@ -147,6 +156,7 @@ int main(int argc, char **argv)
 
         case ACK_TIMEOUT:
             send_pure_ack(dl_get_frame_expected());
+            phl_ready = 0;
             stop_ack_timer();
             break;
 
