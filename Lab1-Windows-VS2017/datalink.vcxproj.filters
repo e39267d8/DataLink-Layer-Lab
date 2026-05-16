@@ -13,43 +13,45 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Student">
+      <UniqueIdentifier>{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Teacher">
+      <UniqueIdentifier>{B2C3D4E5-F6A7-8901-BCDE-F12345678901}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\src\getopt.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\lprintf.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\protocol.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\crc32.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="..\src\datalink.c">
-      <Filter>Source Files</Filter>
+      <Filter>Student</Filter>
     </ClCompile>
     <ClCompile Include="..\src\datalink_recv.c">
-      <Filter>Source Files</Filter>
+      <Filter>Student</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\protocol.c">
+      <Filter>Teacher</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\lprintf.c">
+      <Filter>Teacher</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\crc32.c">
+      <Filter>Teacher</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\getopt.c">
+      <Filter>Teacher</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\include\getopt.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\include\lprintf.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\include\datalink.h">
+      <Filter>Student</Filter>
     </ClInclude>
     <ClInclude Include="..\include\protocol.h">
-      <Filter>Header Files</Filter>
+      <Filter>Teacher</Filter>
     </ClInclude>
-    <ClInclude Include="..\include\datalink.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="..\include\lprintf.h">
+      <Filter>Teacher</Filter>
     </ClInclude>
-  </ItemGroup>
-  <ItemGroup>
-    <Text Include="Debug\datalink-A.log" />
-    <Text Include="Debug\datalink-B.log" />
+    <ClInclude Include="..\include\getopt.h">
+      <Filter>Teacher</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
