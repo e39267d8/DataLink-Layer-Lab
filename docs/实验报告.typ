@@ -277,6 +277,51 @@ $ P_"ok" approx (1-P_b)^(L_"bit") approx e^(-L_"bit" P_b) $
 
 当 $P_b$ 升高时，GBN 一旦发生 CRC 失败或丢 ACK，往往要从窗口下界重传多帧，重传帧再次出错的概率叠加，利用率随 $P_b$ 上升呈#strong[陡降]（俗称相对 SR 的「雪崩」效应）。报告须用一两段话把该因果链写清，并与表 3 中场景 4 vs 5 的落差对照。
 
+== 不同误码率下的利用率变化（洪水场景）
+
+双端 `-f` 洪水时，接收方利用率随 $P_b$ 单调下降，与独立误码缩放 + GBN 回退放大一致：
+
+#align(center)[
+  #table(
+    columns: (0.8fr, 1fr, 0.9fr, 0.9fr, 0.9fr, 1.6fr),
+    inset: 5pt,
+    align: center,
+    stroke: 0.5pt + gray,
+    table.header(
+      [*表 3 场景*], [$P_b$], [*A 利用率 %*], [*B 利用率 %*], [*均值 %*], [*现象*],
+    ),
+    [3], [$0$（`-u`）], [94.09], [94.09], [94.09], [管道饱和，Err 0],
+    [4], [$10^(-5)$（默认）], [75.99], [75.51], [75.75], [CRC 丢帧 + 超时重传，仍可维持较高吞吐],
+    [5], [$10^(-4)$（`-b 1e-4`）], [29.55], [27.31], [28.43], [回退放大，利用率陡降；A/B 对称],
+  ),
+  caption: [洪水场景下 $P_b$ 升高时的利用率（$W=5$，`ACK_TIMEOUT_MS=50`，`phl_ready` 已启用）],
+]
+
+非洪水场景 1（`-u`）与场景 2（默认 $P_b$）受 IBIB 业务不对称影响，A/B 利用率差较大，不宜与上表直接横比，但同样呈现「误码越高、有效吞吐越低」的趋势（见表 3 第 1、2 行）。
+
+== 窗口参数对比实验（$W=3$ vs $W=5$）
+
+指导书要求#strong[调整窗口观察效率变化]。本组在相同五类表 3 命令下，保留旧版日志（`WINDOW_SIZE=3`、`ACK_TIMEOUT_MS=200`、无 `phl_ready` 门控）与优化后复测（`W=5`、`ACK=50 ms`、`phl_ready`）对比如下：
+
+#align(center)[
+  #table(
+    columns: (1fr, 1.3fr, 1.5fr, 1fr),
+    inset: 5pt,
+    align: center,
+    stroke: 0.5pt + gray,
+    table.header(
+      [*场景*], [*旧参数 A / B %*], [*新参数 A / B %*], [*变化要点*],
+    ),
+    [1 无误码], [39.36 / 69.64], [52.90 / 95.15], [+13.5 / +25.5 pp；B 站逼近饱和],
+    [3 Flood+Utopia], [72.32 / 72.30], [94.09 / 94.09], [+21.8 pp；对称；`phl_ready` 主因],
+    [4 Flood+默认误码], [63.69 / 62.80], [75.99 / 75.51], [+12.3 pp 量级],
+    [5 Flood+$10^(-4)$], [32.02 / 31.24], [29.55 / 27.31], [略降但 A/B 对称，无单侧饥饿],
+  ),
+  caption: [窗口与闸门优化前后利用率对比（每场景 600 s）],
+]
+
+#strong[结论]：场景 3 提升最大，证明#strong[物理层就绪信号接入网络层闸门]比单纯增大 $W$ 更关键；$W=3 arrow 5$ 在场景 1、4 亦有明显增益。场景 5 均值略降属高误码下 GBN 固有代价，但消除了旧版 B/A $approx 1.12$ 的不对称异常。
+
 == 性能测试记录（指导书表 3）
 
 #align(center)[
@@ -288,16 +333,16 @@ $ P_"ok" approx (1-P_b)^(L_"bit") approx e^(-L_"bit" P_b) $
     table.header(
       [*序号*], [*场景*], [*A 命令*], [*B 命令*], [*A 利用率 %*], [*B 利用率 %*], [*运行时长 / 备注*],
     ),
-    [1], [无误码], [#text(size: 7pt)[#raw("-u -d0 -t 600 -p 59281 -l table3-1-utopia-A.log A")]], [#text(size: 7pt)[#raw("-u -d0 -t 600 -p 59281 -l table3-1-utopia-B.log B")]], [39.36], [69.64], [600 s；Err 0],
+    [1], [无误码], [#text(size: 7pt)[#raw("-u -d0 -t 600 -p 59281 -l table3-1-utopia-A.log A")]], [#text(size: 7pt)[#raw("-u -d0 -t 600 -p 59281 -l table3-1-utopia-B.log B")]], [52.90], [95.15], [600 s；Err 0；W=5 复测],
     [2], [默认业务], [#text(size: 7pt)[#raw("-d0 -t 600 -p 59282 -l table3-2-default-A.log A")]], [#text(size: 7pt)[#raw("-d0 -t 600 -p 59282 -l table3-2-default-B.log B")]], [34.18], [61.81], [600 s；Err 20/33],
-    [3], [双端洪水+无误码], [#text(size: 7pt)[#raw("-f -u -d0 -t 600 -p 59283 -l table3-3-flood-utopia-A.log A")]], [#text(size: 7pt)[#raw("-f -u -d0 -t 600 -p 59283 -l table3-3-flood-utopia-B.log B")]], [94.08], [94.13], [600 s；Err 0；W=5+phl_ready 复测],
-    [4], [双端洪水（默认误码）], [#text(size: 7pt)[#raw("-f -d0 -t 600 -p 59284 -l table3-4-flood-default-A.log A")]], [#text(size: 7pt)[#raw("-f -d0 -t 600 -p 59284 -l table3-4-flood-default-B.log B")]], [63.69], [62.80], [600 s；Err 32/34],
-    [5], [洪水+高误码], [#text(size: 7pt)[#raw("-f -b 1e-4 -d0 -t 600 -p 59285 -l table3-5-flood-ber1e-4-A.log A")]], [#text(size: 7pt)[#raw("-f -b 1e-4 -d0 -t 600 -p 59285 -l table3-5-flood-ber1e-4-B.log B")]], [33.03], [27.04], [600 s；对称 Flood 复测],
+    [3], [双端洪水+无误码], [#text(size: 7pt)[#raw("-f -u -d0 -t 600 -p 59283 -l table3-3-flood-utopia-A.log A")]], [#text(size: 7pt)[#raw("-f -u -d0 -t 600 -p 59283 -l table3-3-flood-utopia-B.log B")]], [94.09], [94.09], [600 s；Err 0；W=5+phl_ready],
+    [4], [双端洪水（默认误码）], [#text(size: 7pt)[#raw("-f -d0 -t 600 -p 59284 -l table3-4-flood-default-A.log A")]], [#text(size: 7pt)[#raw("-f -d0 -t 600 -p 59284 -l table3-4-flood-default-B.log B")]], [75.99], [75.51], [600 s；W=5 复测],
+    [5], [洪水+高误码], [#text(size: 7pt)[#raw("-f -b 1e-4 -d0 -t 600 -p 59285 -l table3-5-flood-ber1e-4-A.log A")]], [#text(size: 7pt)[#raw("-f -b 1e-4 -d0 -t 600 -p 59285 -l table3-5-flood-ber1e-4-B.log B")]], [29.55], [27.31], [600 s；对称 Flood],
   ),
   caption: [表 3 实测数据；五场景均自然 `Quit`，未出现 `bad packet` / `Abort`。利用率取日志末次 `packets received` 行中 bps 与 8000 bps 的比例。],
 ]
 
-#strong[结果分析]。场景 3 在无误码且双端持续洪水时，两端利用率约 #strong[94.1%]（较修复前约 72% 提升约 22 个百分点），表明 `phl_ready` 闸门打通 `PHYSICAL_LAYER_READY` 后管道可连续饱和，管线效率约达载荷理论上界的 97%。场景 1、2、4 为同一套宏下复用指导书命令（非 Flood 或默认误码），利用率与优化前同量级。场景 5 在高误码 Flood 下 A/B 分别为 33.03% / 27.04%，较旧版（约 32% / 31%）体现对称性修复后的双端行为，仍符合 GBN 回退放大导致吞吐陡降的预期。
+#strong[结果分析]。场景 3 在无误码洪水下两端约 #strong[94.1%]（较 $W=3$ 旧版 72.3% 提升约 22 pp），`phl_ready` 打通物理层就绪与网络层开闸是主因。场景 1、4 在 $W=5$ 下亦有双位数 pp 提升（见上一节对比表）。场景 5 均值约 28.4%，略低于旧版 31.6%，但 A/B 对称、无单侧饥饿，符合高误码 GBN 预期。误码率从 0 $arrow 10^(-5) arrow 10^(-4)$ 的洪水利用率阶梯见「不同误码率下的利用率变化」表。
 
 == 实测与理论对比
 
@@ -310,9 +355,9 @@ $ P_"ok" approx (1-P_b)^(L_"bit") approx e^(-L_"bit" P_b) $
     table.header(
       [*场景*], [*理论参考 %*], [*实测 %*], [*差距*], [*原因分析要点*],
     ),
-    [3 洪水无误码], [载荷上界 $256/263 approx 97.34$], [94.11], [约 -3.2], [帧头/CRC 与事件循环 `Sleep(15ms)` 等残余开销；`phl_ready` 已消除主要物理层饥饿空等],
-    [4 洪水默认误码], [$97.34 times e^(-2104 times 10^(-5)) approx 95.31$], [63.25], [约 -32.1], [误码触发 CRC 丢帧与 GBN 回退，实际代价大于独立成功率缩放],
-    [5 洪水 $10^(-4)$], [$97.34 times e^(-2104 times 10^(-4)) approx 78.95$], [30.04], [约 -48.9], [高误码下 GBN 窗口回退与重传放大；A/B 约 33% / 27%，对称 Flood 下无单侧饥饿],
+    [3 洪水无误码], [载荷上界 $256/263 approx 97.34$], [94.09], [约 -3.3], [帧头/CRC 与事件循环 `Sleep(15ms)` 等残余开销；`phl_ready` 已消除主要物理层饥饿空等],
+    [4 洪水默认误码], [$97.34 times e^(-2104 times 10^(-5)) approx 95.31$], [75.75], [约 -19.6], [误码触发 CRC 丢帧与 GBN 回退；$W=5$ 后仍低于独立缩放上界],
+    [5 洪水 $10^(-4)$], [$97.34 times e^(-2104 times 10^(-4)) approx 78.95$], [28.43], [约 -50.5], [高误码下 GBN 窗口回退与重传放大；A/B 对称],
   ),
   caption: [理论值为简化上界，仅用于解释数量级；实测值取 A/B 末次利用率均值],
 ]
