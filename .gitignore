@@ -1,31 +1,35 @@
-# 编译产生的临时文件和目标文件
+# 编译产物（统一在 build/）
+/build/*
+!/build/.gitkeep
+
 *.o
 *.exe
 *.out
 *.err
-
-# 日志文件（非常重要）
+*.obj
+*.ilk
+*.pdb
+*.idb
+*.tlog
 *.log
 datalink-A.log
 datalink-B.log
 
-# 编译后的可执行文件
-datalink
+# 根目录勿再放可执行文件
+/datalink
+/datalink.exe
 
-# Typst 编译输出（源文件保留 *.typ）
+# Typst 编译输出
 docs/*.pdf
 /report.pdf
 
-# IDE 与本地杂项
+# IDE 与 VS 本地目录
 .vs/
 *.user
 *.suo
 *.VC.db
 *.ipch
-Debug/
-Release/
-*.ilk
-*.pdb
-*.obj
-*.tlog
 UpgradeLog.htm
+Lab1-Windows-VS2017/Debug/
+Lab1-Windows-VS2017/datalink/
+Lab1-Windows-VS2017/.vs/
