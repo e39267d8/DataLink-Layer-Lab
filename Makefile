@@ -1,35 +1,36 @@
 CC = gcc
-# -I./include 告诉编译器去哪里找头文件
 CFLAGS = -Wall -g -I./include
 LDLIBS =
+BUILD_DIR = build
+OBJ_DIR = $(BUILD_DIR)/obj
 RM = rm -f
 
 SRCS = src/datalink.c src/datalink_recv.c src/protocol.c src/lprintf.c src/crc32.c
-# Windows 下 protocol.c 使用 bundled getopt；Linux 使用系统 getopt_long，勿链接 getopt.c 以免与 libc 重复符号
+# Windows 下 protocol.c 使用 bundled getopt；Linux 使用系统 getopt_long
 ifeq ($(OS),Windows_NT)
 SRCS += src/getopt.c
 LDLIBS += -lws2_32
-TARGET = datalink.exe
+TARGET = $(BUILD_DIR)/datalink.exe
 RM = del /Q
-OBJ_GLOB = src\*.o
-LOG_GLOB = *.log
 else
-TARGET = datalink
-OBJ_GLOB = src/*.o
-LOG_GLOB = *.log
+TARGET = $(BUILD_DIR)/datalink
 endif
 
-OBJS = $(SRCS:.c=.o)
+OBJS = $(SRCS:src/%.c=$(OBJ_DIR)/%.o)
 
 all: $(TARGET)
 
-$(TARGET): $(OBJS)
+$(TARGET): $(OBJS) | $(BUILD_DIR) $(OBJ_DIR)
 	$(CC) $(CFLAGS) -o $@ $^ -lm $(LDLIBS)
 
-%.o: %.c
+$(OBJ_DIR)/%.o: src/%.c | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR) $(OBJ_DIR):
+	mkdir -p $@
+
 clean:
-	-$(RM) $(OBJ_GLOB) $(TARGET) $(LOG_GLOB)
+	-$(RM) -r $(BUILD_DIR) 2>/dev/null
+	-$(RM) datalink-A.log datalink-B.log 2>/dev/null
 
 .PHONY: all clean
