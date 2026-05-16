@@ -101,6 +101,15 @@
 
 = 11.2 软件设计
 
+== 协议选型：为何采用搭载 ACK 的 GBN
+
+本组在指导书允许的三种难度中选定#strong[搭载 ACK 的 Go-Back-N（GBN）]，而非选择重传（SR）或停等，理由如下：
+
++ #strong[实现复杂度]：SR 需在接收端为窗口外帧维护重排序缓存，并对每一帧单独确认；GBN 接收端仅维护 `frame_expected` 一个序号指针，失序/重复帧丢弃并重复累积 ACK，与 `datalink_recv.c` 体量可控。
++ #strong[全双工捎带 ACK]：本信道为双向同时发送；GBN 将 `ack` 字段嵌入 DATA 帧首部，反向有数据时自然捎带确认，无数据时再以纯 ACK 补足。累积 ACK 语义与「期望下一序号」字段一致，无需 SR 的逐帧 NAK/选择性确认状态机。
++ #strong[与教师参考对齐]：`Lab1-Windows-VS2017/Example/gobackn.exe` 提供 GBN 行为与日志格式对照，便于验收表 3 利用率数量级。
++ #strong[代价认知]：GBN 在 $P_b$ 升高时自窗口下界整段回退，吞吐相对 SR 更易「雪崩」；本实验通过表 3 场景 4→5 的落差定量展示该权衡，而非回避。
+
 == （1）数据结构
 
 #align(center)[
@@ -170,6 +179,47 @@ $ t_"expire" = t_"now" + "phl_sq_len"() dot 8000 slash "CHAN_BPS" + "ms" $
 `PHYSICAL_LAYER_READY` 在库中当 `phl_sq_len() < "PHL_SQ_LEVEL"`（本仓库 `PHL_SQ_LEVEL = 50` 字节）等条件满足时通知链路层可继续向物理层写字节。
 
 #strong[`phl_ready` 网络层闸门（本组关键优化）]：初版在 `PHYSICAL_LAYER_READY` 分支为空操作，物理层队列排空后发送侧仍因窗口满而长期 `disable_network_layer`，只能等待 `ACK_TIMEOUT` 纯 ACK 才能续发——洪水无误码利用率约 70%。现实现以 `phl_ready` 标志协同：`PHYSICAL_LAYER_READY` 或 `phl_sq_len() < 50` 时置 1；`send_one_data_frame` / `resend_window` 在 `send_frame` 后置 0；`refresh_network_layer_gate()` 仅在 `nbuffered() < WINDOW_SIZE` 且 `phl_ready` 时开闸。修复后场景 3 利用率由约 72% 升至约 94%（见表 3），管线效率约达理论上限的 97%。
+
+== （4）关键代码摘录
+
+#strong[物理层就绪与网络层闸门]（`src/datalink.c`）：
+
+```c
+case PHYSICAL_LAYER_READY:
+    phl_ready = 1;
+    break;
+/* ... 每个事件末尾 ... */
+static void refresh_network_layer_gate(void)
+{
+    if (phl_sq_len() < 50)
+        phl_ready = 1;
+    if (nbuffered() < (unsigned)WINDOW_SIZE && phl_ready)
+        enable_network_layer();
+    else
+        disable_network_layer();
+}
+```
+
+#strong[组帧发送与 `phl_ready` 置位]（节选）：
+
+```c
+static void send_one_data_frame(void)
+{
+    if (nbuffered() >= (unsigned)WINDOW_SIZE)
+        return;
+    /* kind / seq / ack / get_packet / crc32 ... */
+    send_frame(tx, wire_len);
+    phl_ready = 0;
+    next_frame_to_send = inc_seq(next_frame_to_send);
+    /* start_timer(DATA_TIMER_ID, DATA_TIMEOUT_MS) ... */
+}
+```
+
+== （5）窗口参数的配置方式
+
+`WINDOW_SIZE`、`ACK_TIMEOUT_MS` 等在 `include/datalink.h` 中以 `#define`#strong[编译期固定]，`protocol_init` 的 `getopt`#strong[不提供]窗口命令行选项。设计考量：窗口宽度与确认语义属于链路层协议规范的一部分，运行时可变窗口需额外协商与一致性校验，超出本实验范围；误码率 $P_b$、洪水 `-f`、无误码 `-u` 等#strong[已由教师库命令行支持]，便于表 3 分场景压测。
+
+若需对比不同 $W$：修改 `datalink.h` 后 `make` 或 VS 重新生成 `build/datalink.exe`，双端必须使用#strong[同一二进制]。经 BDP 推导与表 3 对比实验，$W = 5$ 在 8000 bps / 270 ms 信道下场景 3 实测约 94.1%，距载荷理论上界 97.3% 仅约 3 pp，继续增大窗口边际收益趋近于零，仅增加 `frame_buffer` 内存占用。
 
 #pagebreak()
 
