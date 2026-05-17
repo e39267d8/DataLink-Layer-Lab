@@ -1,13 +1,11 @@
 /*
- * 接收侧与纯 ACK —— 尹浩铭主责；本文件提供与 datalink.c 的约定接口。
- * 张恒基在 FRAME_RECEIVED / ACK_TIMEOUT 中只调用下列函数，不重复实现 CRC 细节。
+ * 接收侧：CRC 校验、按序交付、纯 ACK 组帧。
  */
 
 #include <string.h>
 #include "protocol.h"
 #include "datalink.h"
 
-/* 接收端按序期望的下一 DATA 序号（用于捎带 ACK 与纯 ACK 的 ack 字段） */
 static unsigned char frame_expected;
 
 unsigned char dl_get_frame_expected(void)
@@ -30,6 +28,9 @@ void send_pure_ack(unsigned char ack_seq)
     dbg_event("sent pure ACK seq=%u\n", (unsigned)ack_seq);
 }
 
+/*
+ * 返回值：-1 非法帧；0 纯 ACK；1 按序 DATA；2 失序 DATA（不交付载荷）。
+ */
 int validate_and_process_frame(unsigned char *frame, int len, unsigned int *ack_seq,
     unsigned char *data_out, int *data_len)
 {
@@ -73,7 +74,6 @@ int validate_and_process_frame(unsigned char *frame, int len, unsigned int *ack_
 
     fe = frame_expected;
     if (f->seq != fe) {
-        /* GBN：非期望序号，不交付网络层；对端捎带的 ack 仍由调用方处理 */
         dbg_event("out-of-order frame: got seq=%u, expected %u, discarded payload\n",
                   (unsigned)f->seq, (unsigned)fe);
         return 2;
